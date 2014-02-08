@@ -4,7 +4,9 @@ import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 
 
 /**
@@ -112,7 +114,13 @@ public class UDPTunnel {
 		
 		public TunnelThread(int port) throws IOException {
 			this.port = port;
-			this.tcpConnection = new Socket(InetAddress.getLocalHost(), port);
+			if(type == Type.Client) {
+				this.tcpConnection = new Socket(InetAddress.getLocalHost(), port);
+			} else {
+				ServerSocket ss = new ServerSocket(port);
+				ss.setSoTimeout(10000);
+				this.tcpConnection = ss.accept();
+			}
 			this.tcp = new TCPListenerThread();
 			this.udp = new UDPListenerThread();
 		}
@@ -128,7 +136,8 @@ public class UDPTunnel {
 	
 	public static void showUsage() {
 		System.err.println("Tunnels UDP packets through a SSH tunnel");
-		System.err.println("Usage: UDPTunnel <port1> [port2] [port3] [...]");
+		System.err.println("Usage: UDPTunnel <type> <port1> [port2] [port3] [...]");
+		System.err.println("Type: either \"server\" or \"client\"");
 		System.exit(1);
 	}
 	
@@ -145,7 +154,7 @@ public class UDPTunnel {
 			showUsage();
 		}
 		// start the tunnel threads
-		for(int i = 0; i < args.length; i++) {
+		for(int i = 1; i < args.length; i++) {
 			String s = args[i];
 			int port = Integer.parseInt(s);
 			if(port > 0 && port < 0xFFFF) {
