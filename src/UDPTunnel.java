@@ -6,6 +6,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
 
 
 /**
@@ -25,31 +26,60 @@ public class UDPTunnel {
 	/**
 	 * Wraps a TCPListenerThread and a UDPListenerThread on the same port
 	 */
-	public class TunnelThread {
+	public class TunnelThread extends Thread {
+		
+		// list of sockets for server mode
+		private HashMap<InetAddress, Socket> peers = null;
+		// single socket for client mode
+		private Socket ClientTcpSocket = null;
 		
 		/**
 		 * Listens on TCP and forwards data to UDP
 		 */
 		private class TCPListenerThread extends Thread {
+			
+			public Socket tcpSock;
+			
+			public TCPListenerThread(Socket s) {
+				tcpSock = s;
+			}
+			
 			@Override
 			public void run() {
 				try {
-					initConnection();
-					InputStream i = tcpConnection.getInputStream();
+					InputStream i = tcpSock.getInputStream();
 					for(;;) {
 						try {
 							// get the length of the UDP packet (how much of the TCP stream to read)
 							int packetLen = i.read() << 24 | i.read() << 16 | i.read() << 8 | i.read();
 							if(packetLen <= 0) {
 								System.err.println("End of stream on port " + port);
-								return;
+								break;
 							}
-							System.out.println("Forwarding packet from TCP port " + tcpConnection.getPort() + " to UDP port " + port + " (" + packetLen + " bytes)");
+							if(packetLen >= 0xFFFF) {
+								System.err.println("Invalid packet on port " + port);
+								break;
+							}
+							if(type == Type.Server) {
+								System.out.println("Forwarding packet from TCP port " + tcpSock.getPort() + " to UDP port " + port + " at host " + tcpSock.getInetAddress().getHostAddress() + " (" + packetLen + " bytes)");
+							} else {
+								System.out.println("Forwarding packet from TCP port " + tcpSock.getPort() + " to UDP port " + port + " (" + packetLen + " bytes)");
+							}
 							byte[] buf = new byte[packetLen];
 							i.read(buf);
-							udpConnection.send(new DatagramPacket(buf, buf.length, InetAddress.getLocalHost(), ephemeralPort));
+							udpSock.send(new DatagramPacket(buf, buf.length, InetAddress.getLocalHost(), ephemeralPort));
 						} catch (IOException e) {
 							e.printStackTrace();
+						}
+					}
+					if(type == Type.Server) {
+						synchronized (peers) {
+							peers.remove(tcpSock.getInetAddress());
+						}
+					} else {
+						synchronized (ClientTcpSocket) {
+							ClientTcpSocket.close();
+							ClientTcpSocket = null;
 						}
 					}
 				} catch (Exception e) {
@@ -65,18 +95,33 @@ public class UDPTunnel {
 			@Override
 			public void run() {
 				try {
-					initConnection();
-					byte[] buf = new byte[64000];
+					byte[] buf = new byte[0xFFFF];
 					DatagramPacket p = new DatagramPacket(buf, buf.length);
 					OutputStream o;
-					o = tcpConnection.getOutputStream();
 					for(;;) {
 						try {
-							udpConnection.receive(p);
+							udpSock.receive(p);
 							ephemeralPort = p.getPort();
+							// get the tcp output stream
+							if(type == Type.Server) {
+								Socket tcpSock = peers.get(p.getAddress());
+								if(tcpSock == null) {
+									continue;
+								}
+								o = tcpSock.getOutputStream();
+							} else {
+								if(ClientTcpSocket == null) {
+									break;
+								}
+								o = ClientTcpSocket.getOutputStream();
+							}
 							// write the length of the packet
 							int packetLen = p.getLength();
-							System.out.println("Forwarding packet from UDP port " + p.getPort() + " to TCP port " + port + " (" + packetLen + " bytes)");
+							if(type == Type.Server) {
+								System.out.println("Forwarding packet from UDP port " + p.getPort() + " to TCP port " + port + " at host " + p.getAddress().getHostAddress() + " (" + packetLen + " bytes)");
+							} else {
+								System.out.println("Forwarding packet from UDP port " + p.getPort() + " to TCP port " + port + " (" + packetLen + " bytes)");
+							}
 							o.write(packetLen >> 24);
 							o.write(packetLen >> 16);
 							o.write(packetLen >> 8);
@@ -95,40 +140,41 @@ public class UDPTunnel {
 		
 		public final int port;
 		public int ephemeralPort;
-		public final TCPListenerThread tcp;
-		public final UDPListenerThread udp;
-		public Socket tcpConnection;
-		public DatagramSocket udpConnection;
-		
-		public synchronized void initConnection() throws IOException {
-			if(this.tcpConnection != null && udpConnection != null)
-				return;
-			if(type == Type.Client) {
-				this.udpConnection = new DatagramSocket(port);
-				this.tcpConnection = new Socket(InetAddress.getLocalHost(), port);
-			} else {
-				this.udpConnection = new DatagramSocket();
-				ServerSocket ss = new ServerSocket(port);
-				ss.setSoTimeout(10000);
-				this.tcpConnection = ss.accept();
-				ss.close();
-			}
-		}
+		public DatagramSocket udpSock;
 		
 		public TunnelThread(int port) throws IOException {
 			this.port = port;
 			this.ephemeralPort = port;
 			System.out.println("Tunnelling UDP port " + port);
-			this.tcp = new TCPListenerThread();
-			this.udp = new UDPListenerThread();
 		}
 		
-		/**
-		 * Starts both threads
-		 */
-		public void start() {
-			this.tcp.start();
-			this.udp.start();
+		@Override
+		public void run() {
+			if(type == Type.Server) {
+				try(ServerSocket ss = new ServerSocket(port)) {
+					this.udpSock = new DatagramSocket();
+					this.peers = new HashMap<InetAddress, Socket>();
+					for(;;) {
+						Socket s = ss.accept();
+						synchronized (peers) {
+							this.peers.put(s.getInetAddress(), s);
+						}
+						new TCPListenerThread(s).start();;
+					}
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			} else {
+				try {
+					this.udpSock = new DatagramSocket(port);
+					Socket s = new Socket(InetAddress.getLocalHost(), port);
+					ClientTcpSocket = s;
+					new TCPListenerThread(s).start();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+			new UDPListenerThread().start();;
 		}
 	}
 	
