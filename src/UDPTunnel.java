@@ -37,9 +37,7 @@ public class UDPTunnel {
 					InputStream i = tcpConnection.getInputStream();
 					for(;;) {
 						try {
-							// get the length of the packet
-							// (UDP is packet based and TCP is stream based,
-							// so we need to make sure we get the proper UDP packet)
+							// get the length of the UDP packet (how much of the TCP stream to read)
 							int packetLen = i.read() << 24 | i.read() << 16 | i.read() << 8 | i.read();
 							if(packetLen <= 0) {
 								System.err.println("End of stream on port " + port);
@@ -48,7 +46,7 @@ public class UDPTunnel {
 							System.out.println("Forwarding UDP packet from TCP (" + packetLen + " bytes)");
 							byte[] buf = new byte[packetLen];
 							i.read(buf);
-							udpConnection.send(new DatagramPacket(buf, buf.length, InetAddress.getLocalHost(), port));
+							udpConnection.send(new DatagramPacket(buf, buf.length, InetAddress.getLocalHost(), ephemeralPort));
 						} catch (IOException e) {
 							e.printStackTrace();
 						}
@@ -73,6 +71,7 @@ public class UDPTunnel {
 					for(;;) {
 						try {
 							udpConnection.receive(p);
+							ephemeralPort = p.getPort();
 							// write the length of the packet
 							int packetLen = p.getLength();
 							System.out.println("Forwarding TCP packet from UDP (" + packetLen + " bytes)");
@@ -93,6 +92,7 @@ public class UDPTunnel {
 		}
 		
 		public final int port;
+		public int ephemeralPort;
 		public final TCPListenerThread tcp;
 		public final UDPListenerThread udp;
 		public final Socket tcpConnection;
@@ -100,6 +100,7 @@ public class UDPTunnel {
 		
 		public TunnelThread(int port) throws IOException {
 			this.port = port;
+			this.ephemeralPort = port;
 			if(type == Type.Client) {
 				this.tcpConnection = new Socket(InetAddress.getLocalHost(), port);
 				this.udpConnection = new DatagramSocket(port);
@@ -126,7 +127,7 @@ public class UDPTunnel {
 	public static void showUsage() {
 		System.err.println("Tunnels UDP packets through a SSH tunnel");
 		System.err.println("Usage: UDPTunnel <type> <port1> [port2] [port3] [...]");
-		System.err.println("Type: either \"server\" or \"client\"");
+		System.err.println("\ttype: either \"server\" or \"client\"");
 		System.exit(1);
 	}
 	
@@ -154,7 +155,7 @@ public class UDPTunnel {
 	}
 	
 	/**
-	 *	@param args list of ports to tunnel
+	 *	@param args type (client/server), and list of ports to tunnel
 	 */
 	public static void main(String[] args) throws IOException {
 		new UDPTunnel(args);
