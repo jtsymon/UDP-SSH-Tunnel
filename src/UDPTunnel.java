@@ -34,19 +34,17 @@ public class UDPTunnel {
 			@Override
 			public void run() {
 				try {
-					initTcpConnection();
+					initConnection();
 					InputStream i = tcpConnection.getInputStream();
 					for(;;) {
 						try {
 							// get the length of the UDP packet (how much of the TCP stream to read)
 							int packetLen = i.read() << 24 | i.read() << 16 | i.read() << 8 | i.read();
 							if(packetLen <= 0) {
-								System.err.println(packetLen);
 								System.err.println("End of stream on port " + port);
-								initTcpConnection();
-								continue;
+								return;
 							}
-							System.out.println("Forwarding UDP packet from TCP (" + packetLen + " bytes)");
+							System.out.println("Forwarding packet from TCP port " + tcpConnection.getPort() + " to UDP port " + port + " (" + packetLen + " bytes)");
 							byte[] buf = new byte[packetLen];
 							i.read(buf);
 							udpConnection.send(new DatagramPacket(buf, buf.length, InetAddress.getLocalHost(), ephemeralPort));
@@ -67,7 +65,7 @@ public class UDPTunnel {
 			@Override
 			public void run() {
 				try {
-					initTcpConnection();
+					initConnection();
 					byte[] buf = new byte[64000];
 					DatagramPacket p = new DatagramPacket(buf, buf.length);
 					OutputStream o;
@@ -78,7 +76,7 @@ public class UDPTunnel {
 							ephemeralPort = p.getPort();
 							// write the length of the packet
 							int packetLen = p.getLength();
-							System.out.println("Forwarding TCP packet from UDP (" + packetLen + " bytes)");
+							System.out.println("Forwarding packet from UDP port " + p.getPort() + " to TCP port " + port + " (" + packetLen + " bytes)");
 							o.write(packetLen >> 24);
 							o.write(packetLen >> 16);
 							o.write(packetLen >> 8);
@@ -100,14 +98,16 @@ public class UDPTunnel {
 		public final TCPListenerThread tcp;
 		public final UDPListenerThread udp;
 		public Socket tcpConnection;
-		public final DatagramSocket udpConnection;
+		public DatagramSocket udpConnection;
 		
-		public synchronized void initTcpConnection() throws IOException {
-			if(this.tcpConnection != null && this.tcpConnection.isConnected() && !this.tcpConnection.isClosed())
+		public synchronized void initConnection() throws IOException {
+			if(this.tcpConnection != null && udpConnection != null)
 				return;
 			if(type == Type.Client) {
+				this.udpConnection = new DatagramSocket(port);
 				this.tcpConnection = new Socket(InetAddress.getLocalHost(), port);
 			} else {
+				this.udpConnection = new DatagramSocket();
 				ServerSocket ss = new ServerSocket(port);
 				ss.setSoTimeout(10000);
 				this.tcpConnection = ss.accept();
@@ -119,11 +119,6 @@ public class UDPTunnel {
 			this.port = port;
 			this.ephemeralPort = port;
 			System.out.println("Tunnelling UDP port " + port);
-			if(type == Type.Client) {
-				this.udpConnection = new DatagramSocket(port);
-			} else {
-				this.udpConnection = new DatagramSocket();
-			}
 			this.tcp = new TCPListenerThread();
 			this.udp = new UDPListenerThread();
 		}
