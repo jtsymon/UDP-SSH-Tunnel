@@ -136,7 +136,9 @@ public class UDPTunnel {
 					for(;;) {
 						try {
 							Socket s = ss.accept();
-							clients.put(s.getInetAddress(), new TunnelConnection(s, new DatagramSocket()));
+							synchronized(clients) {
+								clients.put(s.getInetAddress(), new TunnelConnection(s, new DatagramSocket()));
+							}
 						} catch(IOException e) {
 							e.printStackTrace();
 						}
@@ -146,7 +148,9 @@ public class UDPTunnel {
 				}
 			} else {
 				try {
-					clients.put(InetAddress.getLocalHost(), new TunnelConnection(new Socket(InetAddress.getLocalHost(), port), new DatagramSocket(port)));
+					synchronized (clients) {
+						clients.put(InetAddress.getLocalHost(), new TunnelConnection(new Socket(InetAddress.getLocalHost(), port), new DatagramSocket(port)));
+					}
 				} catch (IOException e) {
 					e.printStackTrace();
 				}
