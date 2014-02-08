@@ -6,7 +6,6 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketTimeoutException;
 
 
 /**
@@ -32,13 +31,6 @@ public class UDPTunnel {
 		 * Listens on TCP and forwards data to UDP
 		 */
 		private class TCPListenerThread extends Thread {
-			
-			public DatagramSocket UDPSock = null;
-			
-			public TCPListenerThread() throws IOException {
-				UDPSock = new DatagramSocket();
-			}
-			
 			@Override
 			public void run() {
 				try {
@@ -56,7 +48,7 @@ public class UDPTunnel {
 							System.out.println("Forwarding UDP packet from TCP (" + packetLen + " bytes)");
 							byte[] buf = new byte[packetLen];
 							i.read(buf);
-							UDPSock.send(new DatagramPacket(buf, buf.length, InetAddress.getLocalHost(), port));
+							udpConnection.send(new DatagramPacket(buf, buf.length, InetAddress.getLocalHost(), port));
 						} catch (IOException e) {
 							e.printStackTrace();
 						}
@@ -71,13 +63,6 @@ public class UDPTunnel {
 		 * Listens on UDP and forwards data to TCP
 		 */
 		private class UDPListenerThread extends Thread {
-			
-			public final DatagramSocket UDPSock;
-			
-			public UDPListenerThread() throws IOException {
-				UDPSock = new DatagramSocket(port);
-			}
-			
 			@Override
 			public void run() {
 				byte[] buf = new byte[64000];
@@ -87,7 +72,7 @@ public class UDPTunnel {
 					o = tcpConnection.getOutputStream();
 					for(;;) {
 						try {
-							UDPSock.receive(p);
+							udpConnection.receive(p);
 							// write the length of the packet
 							int packetLen = p.getLength();
 							System.out.println("Forwarding TCP packet from UDP (" + packetLen + " bytes)");
@@ -111,15 +96,19 @@ public class UDPTunnel {
 		public final TCPListenerThread tcp;
 		public final UDPListenerThread udp;
 		public final Socket tcpConnection;
+		public final DatagramSocket udpConnection;
 		
 		public TunnelThread(int port) throws IOException {
 			this.port = port;
 			if(type == Type.Client) {
 				this.tcpConnection = new Socket(InetAddress.getLocalHost(), port);
+				this.udpConnection = new DatagramSocket(port);
 			} else {
+				this.udpConnection = new DatagramSocket();
 				ServerSocket ss = new ServerSocket(port);
 				ss.setSoTimeout(10000);
 				this.tcpConnection = ss.accept();
+				ss.close();
 			}
 			this.tcp = new TCPListenerThread();
 			this.udp = new UDPListenerThread();
