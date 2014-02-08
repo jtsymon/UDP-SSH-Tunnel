@@ -34,14 +34,17 @@ public class UDPTunnel {
 			@Override
 			public void run() {
 				try {
+					initTcpConnection();
 					InputStream i = tcpConnection.getInputStream();
 					for(;;) {
 						try {
 							// get the length of the UDP packet (how much of the TCP stream to read)
 							int packetLen = i.read() << 24 | i.read() << 16 | i.read() << 8 | i.read();
 							if(packetLen <= 0) {
+								System.err.println(packetLen);
 								System.err.println("End of stream on port " + port);
-								return;
+								initTcpConnection();
+								continue;
 							}
 							System.out.println("Forwarding UDP packet from TCP (" + packetLen + " bytes)");
 							byte[] buf = new byte[packetLen];
@@ -63,10 +66,11 @@ public class UDPTunnel {
 		private class UDPListenerThread extends Thread {
 			@Override
 			public void run() {
-				byte[] buf = new byte[64000];
-				DatagramPacket p = new DatagramPacket(buf, buf.length);
-				OutputStream o;
 				try {
+					initTcpConnection();
+					byte[] buf = new byte[64000];
+					DatagramPacket p = new DatagramPacket(buf, buf.length);
+					OutputStream o;
 					o = tcpConnection.getOutputStream();
 					for(;;) {
 						try {
@@ -95,21 +99,30 @@ public class UDPTunnel {
 		public int ephemeralPort;
 		public final TCPListenerThread tcp;
 		public final UDPListenerThread udp;
-		public final Socket tcpConnection;
+		public Socket tcpConnection;
 		public final DatagramSocket udpConnection;
 		
-		public TunnelThread(int port) throws IOException {
-			this.port = port;
-			this.ephemeralPort = port;
+		public synchronized void initTcpConnection() throws IOException {
+			if(this.tcpConnection != null && this.tcpConnection.isConnected() && !this.tcpConnection.isClosed())
+				return;
 			if(type == Type.Client) {
 				this.tcpConnection = new Socket(InetAddress.getLocalHost(), port);
-				this.udpConnection = new DatagramSocket(port);
 			} else {
-				this.udpConnection = new DatagramSocket();
 				ServerSocket ss = new ServerSocket(port);
 				ss.setSoTimeout(10000);
 				this.tcpConnection = ss.accept();
 				ss.close();
+			}
+		}
+		
+		public TunnelThread(int port) throws IOException {
+			this.port = port;
+			this.ephemeralPort = port;
+			System.out.println("Tunnelling UDP port " + port);
+			if(type == Type.Client) {
+				this.udpConnection = new DatagramSocket(port);
+			} else {
+				this.udpConnection = new DatagramSocket();
 			}
 			this.tcp = new TCPListenerThread();
 			this.udp = new UDPListenerThread();
@@ -143,6 +156,7 @@ public class UDPTunnel {
 		} else {
 			showUsage();
 		}
+		System.out.println(this.type);
 		// start the tunnel threads
 		for(int i = 1; i < args.length; i++) {
 			String s = args[i];
