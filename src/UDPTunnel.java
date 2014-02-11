@@ -52,7 +52,7 @@ public class UDPTunnel {
 							try {
 								// get the length of the UDP packet (how much of the TCP stream to read)
 								int packetLen = i.read() << 24 | i.read() << 16 | i.read() << 8 | i.read();
-								if(packetLen <= 0) {
+								if(packetLen < 0) {
 									System.err.println("End of stream on port " + port);
 									break;
 								}
